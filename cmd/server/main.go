@@ -3,6 +3,10 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
+	"time"
+
+	"risk-detection/internal/auth"
 	"risk-detection/internal/db"
 	customrouter "risk-detection/internal/router"
 
@@ -13,19 +17,25 @@ func main() {
 
 	router := gin.New()
 
-	_, err := db.Connect()
+	DB, err := db.Connect()
 
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
-	customrouter.RegisterRoutes(router)
-	
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		log.Fatal("JWT_SECRET environment variable is not set")
+	}
 
-  fmt.Println("Connected to database")
-  router.Run()
 
-	
+	authRepo := auth.NewRepository(DB) 
+	authService := auth.NewService(authRepo, jwtSecret, time.Hour)
+	authHandler := auth.NewHandler(authService)
 
-	
+	customrouter.RegisterRoutes(router, authHandler)
+
+	fmt.Println("Connected to database")
+	router.Run()
+
 }

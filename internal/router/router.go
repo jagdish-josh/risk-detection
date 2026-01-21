@@ -7,11 +7,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-
-func RegisterRoutes(router *gin.Engine) {
+func RegisterRoutes(router *gin.Engine, authHandler *auth.Handler) {
 
 	//Auth routes
-	router.POST("/v1/login", auth.Login)
+	router.POST("/v1/login", authHandler.Login)
 
 	//api routes
 	api := router.Group("/api/v1")

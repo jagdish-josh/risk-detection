@@ -12,8 +12,8 @@ CREATE TABLE users (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- Index for faster email lookup
-CREATE INDEX idx_users_email ON users(email);
+-- Index for faster id lookup
+CREATE INDEX idx_users_id ON users(id);
 
 -- =========================
 

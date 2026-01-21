@@ -22,3 +22,24 @@ type UserSecurity struct {
 	UpdatedAt time.Time `gorm:"type:timestamptz;not null;default:now()"`
 }
 
+type LoginRequest struct {
+	UserID   uuid.UUID `json:"user_id" binding:"required,uuid"`
+	Password string    `json:"password" binding:"required"`
+	DeviceID string    `json:"device_id" binding:"required"`
+}
+
+type LoginResponse struct {
+	AccessToken string `json:"access_token"`
+}
+
+type Repository interface {
+	FindUserByID(userID uuid.UUID) (*User, error)
+	UpdateUserSecurity(uuid.UUID, string, string) error
+}
+
+type Service interface {
+	Login(req LoginRequest, ipAddress string) (LoginResponse, error)
+}
+func (UserSecurity) TableName() string {
+    return "user_security"
+}
