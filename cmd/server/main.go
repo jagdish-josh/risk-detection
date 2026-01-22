@@ -9,6 +9,7 @@ import (
 	"risk-detection/internal/auth"
 	"risk-detection/internal/db"
 	customrouter "risk-detection/internal/router"
+	"risk-detection/internal/transaction"
 
 	"github.com/gin-gonic/gin"
 )
@@ -28,12 +29,13 @@ func main() {
 		log.Fatal("JWT_SECRET environment variable is not set")
 	}
 
-
-	authRepo := auth.NewRepository(DB) 
+	authRepo := auth.NewRepository(DB)
 	authService := auth.NewService(authRepo, jwtSecret, time.Hour)
 	authHandler := auth.NewHandler(authService)
 
-	customrouter.RegisterRoutes(router, authHandler)
+	transactionHandler := transaction.NewTransactionHandler()
+
+	customrouter.RegisterRoutes(router, authHandler, transactionHandler, jwtSecret)
 
 	fmt.Println("Connected to database")
 	router.Run()

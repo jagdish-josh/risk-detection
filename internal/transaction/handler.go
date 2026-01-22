@@ -6,6 +6,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type TransactionHandler struct{
+
+} 
+
+func NewTransactionHandler() *TransactionHandler {
+	return &TransactionHandler{}
+}
+
 // HandleTransaction handles the /api/v1/transection endpoint.
 func HandleTransaction(c *gin.Context) {
 	

@@ -35,13 +35,10 @@ func (s *service) Login(req LoginRequest, ipAdress string) (LoginResponse, error
 	}
 
 	// bytes, err := bcrypt.GenerateFromPassword(
-    //     []byte(req.Password),
-    //     bcrypt.DefaultCost,
-    // )
+	//     []byte(req.Password),
+	//     bcrypt.DefaultCost,
+	// )
 	// fmt.Println(string(bytes))
-	
-
-
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
 		return LoginResponse{}, ErrInvalidCredentials
