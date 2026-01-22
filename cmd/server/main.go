@@ -8,6 +8,7 @@ import (
 
 	"risk-detection/internal/auth"
 	"risk-detection/internal/db"
+	"risk-detection/internal/risk"
 	customrouter "risk-detection/internal/router"
 	"risk-detection/internal/transaction"
 
@@ -29,11 +30,20 @@ func main() {
 		log.Fatal("JWT_SECRET environment variable is not set")
 	}
 
+
 	authRepo := auth.NewRepository(DB)
 	authService := auth.NewService(authRepo, jwtSecret, time.Hour)
 	authHandler := auth.NewHandler(authService)
 
-	transactionHandler := transaction.NewTransactionHandler()
+	
+	riskRepo := risk.NewRepository(DB)
+	riskService := risk.NewService(riskRepo)
+
+
+	transactionRepo := transaction.NewRepository(DB)
+	transactionService := transaction.NewService(transactionRepo, riskService)
+	transactionHandler := transaction.NewHandler(transactionService)
+
 
 	customrouter.RegisterRoutes(router, authHandler, transactionHandler, jwtSecret)
 
