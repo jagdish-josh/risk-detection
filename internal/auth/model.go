@@ -22,10 +22,26 @@ type UserSecurity struct {
 	UpdatedAt time.Time `gorm:"type:timestamptz;not null;default:now()"`
 }
 
+type SignupRequest struct {
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required,min=8"`
+	Role     string `json:"role" binding:"required,oneof=USER ADMIN"`
+	DeviceID string `json:"device_id" binding:"required"`
+}
+
+type SignupResponse struct {
+	UserID      uuid.UUID `json:"user_id"`
+	Email       string    `json:"email"`
+	Role        string    `json:"role"`
+	AccessToken string    `json:"access_token"`
+	TokenType   string    `json:"token_type"`
+	ExpiresIn   int64     `json:"expires_in"`
+}
+
 type LoginRequest struct {
-	UserID   uuid.UUID `json:"user_id" binding:"required,uuid"`
-	Password string    `json:"password" binding:"required"`
-	DeviceID string    `json:"device_id" binding:"required"`
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required"`
+	DeviceID string `json:"device_id" binding:"required"`
 }
 
 type LoginResponse struct {
@@ -36,12 +52,16 @@ type LoginResponse struct {
 
 type Repository interface {
 	FindUserByID(userID uuid.UUID) (*User, error)
+	FindUserByEmail(email string) (*User, error)
+	CreateUser(user *User) error
 	UpdateUserSecurity(uuid.UUID, string, string) error
 }
 
 type Service interface {
+	Signup(req SignupRequest, ipAddress string) (SignupResponse, error)
 	Login(req LoginRequest, ipAddress string) (LoginResponse, error)
 }
+
 func (UserSecurity) TableName() string {
-    return "user_security"
+	return "user_security"
 }

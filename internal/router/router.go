@@ -8,13 +8,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func RegisterRoutes(router *gin.Engine, 
+func RegisterRoutes(router *gin.Engine,
 	authHandler *auth.Handler,
 	transactionHandler *transaction.TransactionHandler,
 	jwtSecret string,
 ) {
 
 	//Auth routes
+	router.POST("/v1/signup", authHandler.Signup)
 	router.POST("/v1/login", authHandler.Login)
 
 	//api routes

@@ -15,6 +15,9 @@ CREATE TABLE users (
 -- Index for faster id lookup
 CREATE INDEX idx_users_id ON users(id);
 
+-- Index for email lookup (for signup and login)
+CREATE INDEX idx_users_email ON users(email);
+
 -- =========================
 
 CREATE TABLE rules (

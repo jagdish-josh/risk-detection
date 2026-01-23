@@ -28,6 +28,21 @@ func (r *repository) FindUserByID(userID uuid.UUID) (*User, error) {
 	return &user, err
 }
 
+func (r *repository) FindUserByEmail(email string) (*User, error) {
+	var user User
+
+	err := r.db.Where("email = ?", email).First(&user).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+
+	return &user, err
+}
+
+func (r *repository) CreateUser(user *User) error {
+	return r.db.Create(user).Error
+}
+
 func (r *repository) UpdateUserSecurity( userID uuid.UUID, deviceID string, ipAdress string) error {
 	var userSec UserSecurity
 	err := r.db.Where("user_id = ?", userID).First(&userSec).Error
