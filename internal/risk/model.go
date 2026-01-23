@@ -24,6 +24,6 @@ type TransactionRiskRepository interface {
 }
 
 type Service interface {
-	CalculateRisk(transactionID string, amount float64) (*TransactionRisk, error)
+	CalculateRisk(tx interface{}) (*TransactionRisk, error)
 }
 

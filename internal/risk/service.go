@@ -1,19 +1,36 @@
 package risk
 
+import (
+    "fmt"
+
+)
+
+// TransactionRepository interface - abstraction to avoid circular dependency
+type TransactionRepository interface {
+   
+}
 
 type service struct {
-	repo TransactionRiskRepository
+    repo                        TransactionRiskRepository
+    transactionRepo             TransactionRepository
 }
 
-func NewService(repo TransactionRiskRepository) Service {
-	return &service{repo: repo}
+func NewService(repo TransactionRiskRepository, transactionRepo TransactionRepository) Service {
+    return &service{
+        repo:            repo,
+        transactionRepo: transactionRepo,
+    }
 }
 
+func (s *service) CalculateRisk(tx interface{}) (*TransactionRisk, error) {
+    
+    fmt.Printf("%+v\n", tx)
 
-func (s *service)CalculateRisk(transactionID string, amount float64) (*TransactionRisk, error){
+	var result TransactionRisk
+	result.Decision = "ALLOW"
+	result.RiskScore = 25
+	result.RiskLevel = "HIGH"
 
-	return nil, nil//for now returning nil<--------------------
-
+    
+    return &result, nil ///need to change result later
 }
-
-

@@ -31,5 +31,5 @@ func (r *repository) UpdateStatusByID(id uuid.UUID, status string) error {
 	return r.db.
 		Model(&Transaction{}).
 		Where("id = ?", id).
-		Update("status", status).Error
+		Update("transaction_status", status).Error
 }

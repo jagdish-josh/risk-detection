@@ -56,6 +56,8 @@ func (s *service) Login(req LoginRequest, ipAdress string) (LoginResponse, error
 
 	return LoginResponse{
 		AccessToken: token,
+		TokenType:   "Bearer",
+		ExpiresIn:   3600, 
 	}, nil
 }
 

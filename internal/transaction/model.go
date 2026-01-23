@@ -16,13 +16,21 @@ type Transaction struct {
 	DeviceID        string    `gorm:"type:varchar(255);not null"`
 	IPAddress       string    `gorm:"type:varchar(45);not null"`
 
-	Status string `gorm:"type:varchar(20);not null;check:status IN ('PENDING','COMPLETED','FLAGGED','BLOCKED')"`
+	TransactionStatus string `gorm:"type:varchar(20);not null;check:status IN ('PENDING','COMPLETED','FLAGGED','BLOCKED')"`
 
 	TransactionTime time.Time `gorm:"type:timestamptz;not null"`
 	CreatedAt       time.Time `gorm:"type:timestamptz;not null;default:now()"`
 	UpdatedAt       time.Time `gorm:"type:timestamptz;not null;default:now()"`
 
 }
+type TransactionRequest struct {
+	TransactionType string     `json:"transaction_type" binding:"required"`
+	ReceiverID      *uuid.UUID `json:"receiver_id"`
+	Amount          float64    `json:"amount" binding:"required,gt=0"`
+	DeviceID        string     `json:"device_id" binding:"required"`
+	TransactionTime time.Time  `json:"transaction_time" binding:"required"`
+}
+
 
 type TransactionRiskResponse struct {
 	TransactionID uuid.UUID `json:"transaction_id"`
