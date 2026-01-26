@@ -15,7 +15,8 @@ import (
 
 // TransactionRepository interface - abstraction to avoid circular dependency
 type TransactionRepository interface {
-	GetByID(id uuid.UUID) (interface{}, error)
+	
+    CountTransactionFrequency(tx context.Context, userID uuid.UUID, duration int32)(float64, error)
 }
 
 type service struct {
@@ -43,6 +44,8 @@ func (s *service) CalculateRisk(tx interface{}) (*TransactionRisk, error) {
 	var amount float64
 	var txTime time.Time
 	var txID uuid.UUID
+    var txDeviceID string
+    var txIpAddress string
 
 	// Extract UserID
 	if userIDField := val.FieldByName("UserID"); userIDField.IsValid() {
@@ -64,15 +67,34 @@ func (s *service) CalculateRisk(tx interface{}) (*TransactionRisk, error) {
 		txID = idField.Interface().(uuid.UUID)
 	}
 
+    // Device ID
+    if deviceID := val.FieldByName("DeviceID"); deviceID.IsValid(){
+        txDeviceID = deviceID.Interface().(string)
+    }
+
+    if ipAddress := val.FieldByName("IpAdress"); ipAddress.IsValid(){
+        txIpAddress = ipAddress.Interface().(string)
+    }
+
 	var result TransactionRisk
 	result.TransactionID = txID
 	result.Decision = "ALLOW"
 
 	// Calculate risk score
-	riskScore, err := s.transactionAmountRisk(context.Background(), userID, amount, txTime)
+	riskScore1, err := s.transactionAmountRisk(context.Background(), userID, amount, txTime)
 	if err != nil {
 		return nil, err
 	}
+
+    riskScore2, err := s.transactionDeviceRisk(context.Background(), userID, txDeviceID, txIpAddress)
+    if err != nil {
+		return nil, err
+	}
+    riskScore3, err := s.transactionFrequencyRisk(context.Background(), userID)
+
+    if err != nil {
+        return nil, err
+    }
 
 	// Fetch behavior to update it
 	behavior, err := s.repo.GetBehaviorByUserID(context.Background(), userID)
@@ -99,7 +121,7 @@ func (s *service) CalculateRisk(tx interface{}) (*TransactionRisk, error) {
 		return nil, err
 	}
 
-	result.RiskScore = int(riskScore)
+	result.RiskScore = int(riskScore1 + riskScore2 + int32(riskScore3)) 
 	result.RiskLevel = "HIGH"
 	result.EvaluatedAt = time.Now()
 
@@ -112,6 +134,7 @@ func (s *service) transactionAmountRisk(
 	amount float64,
 	txTime time.Time,
 ) (int32, error) {
+    log.Println("transaction amount risk triggerd")
 
 	behavior, err := s.repo.GetBehaviorByUserID(ctx, userID)
 	if err != nil {
@@ -249,6 +272,53 @@ func (s *service) transactionAmountRisk(
 	}
 
 	return riskScore, nil
+}
+func (s *service) transactionDeviceRisk(ctx context.Context, userID uuid.UUID, txDeviceID string, txIpAddress string) (int32, error) {
+    log.Println("device security risk triggered")
+    
+    // Return 0 if no device ID provided
+    if txDeviceID == "" {
+        return 0, nil
+    }
+    
+    deviceInfo, err := s.repo.GetDeviceInfo(context.Background(), userID)
+    if err != nil {
+        log.Printf("unable to get device information: %v", err)
+        // Return moderate risk if device info not found
+        return 20, nil
+    }
+
+    // Nil check for deviceInfo
+    if deviceInfo == nil {
+        return 20, nil
+    }
+
+    deviceID := deviceInfo.DeviceID
+
+    if deviceID == txDeviceID {
+        return 0, nil
+    }
+    return 100, nil
+}
+
+func (s *service) transactionFrequencyRisk(ctx context.Context, userID uuid.UUID) (float64, error) {
+    log.Println("high frequency in short duration risk triggered")
+    
+    // Check if transaction repo is nil
+    if s.transactionRepo == nil {
+        log.Printf("transaction repository is nil, skipping frequency risk check")
+        return 0, nil
+    }
+    
+    count, err := s.transactionRepo.CountTransactionFrequency(ctx, userID, 5)
+    if err != nil {
+        log.Printf("unable to count frequency: %v", err)
+        return 0, nil
+    }
+    
+    // Convert int64 to float64 and apply risk calculation
+    riskScore := float64(count) * 10
+    return math.Min(100, riskScore), nil
 }
 
 func (s *service) UpdateUserBehaviorAfterTransaction(

@@ -38,7 +38,7 @@ func main() {
 	transactionRepo := transaction.NewRepository(DB)
 
 	riskRepo := risk.NewRepository(DB)
-	riskService := risk.NewService(riskRepo, nil) 
+	riskService := risk.NewService(riskRepo, transactionRepo)
 	cronjob.NewParameterUpdater(riskRepo)
 
 	transactionService := transaction.NewService(transactionRepo, riskService)

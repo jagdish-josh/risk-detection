@@ -3,6 +3,8 @@ package transaction
 import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"context"
+	"time"
 	
 	
 )
@@ -32,4 +34,27 @@ func (r *repository) UpdateStatusByID(id uuid.UUID, status string) error {
 		Model(&Transaction{}).
 		Where("id = ?", id).
 		Update("transaction_status", status).Error
+}
+
+func (r *repository) CountTransactionFrequency(
+	ctx context.Context,
+	userID uuid.UUID,
+	duration int32,
+) (float64, error) {
+
+	var count int64
+
+	fromTime := time.Now().Add(-time.Duration(duration) * time.Minute)
+
+	err := r.db.WithContext(ctx).
+		Model(&Transaction{}).
+		Where("user_id = ?", userID).
+		Where("created_at >= ?", fromTime).
+		Count(&count).Error
+
+	if err != nil {
+		return 0, err
+	}
+
+	return float64(count), nil
 }

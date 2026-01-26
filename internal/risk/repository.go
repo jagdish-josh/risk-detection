@@ -102,3 +102,12 @@ func (r *repository) UpdateBehaviorPerTransaction(ctx context.Context, behavior 
 func (r *repository) CreateFirstBehavior(ctx context.Context, behavior *UserBehavior) error {
 	return r.db.WithContext(ctx).Create(behavior).Error
 }
+
+func (r *repository) GetDeviceInfo(ctx context.Context,  userID uuid.UUID)(*UserSecurity, error){
+	var userSecurity UserSecurity
+	if err := r.db.First(&userSecurity, "user_id = ?", userID).Error; err != nil {
+		return nil, err
+	}
+	return &userSecurity, nil
+}
+

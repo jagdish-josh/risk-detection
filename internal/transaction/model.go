@@ -2,6 +2,7 @@ package transaction
 
 import (
 	"time"
+	"context"
 
 	"github.com/google/uuid"
 )
@@ -46,6 +47,7 @@ type Repository interface {
 	GetByID(id uuid.UUID) (*Transaction, error)
 	Create(tx *Transaction) error
 	UpdateStatusByID(id uuid.UUID, status string) error
+	CountTransactionFrequency(ctx context.Context,  userID uuid.UUID, duration int32,)(float64, error)
 	
 }
 

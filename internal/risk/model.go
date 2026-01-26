@@ -38,6 +38,13 @@ type UserBehavior struct {
 	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime"`
 }
 
+type UserSecurity struct {
+	UserID    uuid.UUID `gorm:"type:uuid;primaryKey"`
+	DeviceID  string    `gorm:"type:varchar(255);not null"`
+	IPAddress string    `gorm:"type:varchar(45);not null"`
+	UpdatedAt time.Time `gorm:"type:timestamptz;not null;default:now()"`
+}
+
 type DailyAggregate struct {
 	UserID    uuid.UUID
 	TxnCount  int64
@@ -53,6 +60,7 @@ type TransactionRiskRepository interface {
 	UpdateBehaviorParams(ctx context.Context, userID uuid.UUID, stdDev float64, p95 float64) error
 	UpdateBehaviorPerTransaction(ctx context.Context, behavior *UserBehavior) error
 	CreateFirstBehavior(ctx context.Context, behavior *UserBehavior) error
+	GetDeviceInfo(ctx context.Context,  userID uuid.UUID)(*UserSecurity, error)
 }
 
 type Service interface {
@@ -61,4 +69,7 @@ type Service interface {
 
 func (UserBehavior) TableName() string {
 	return "user_behavior"
+}
+func (UserSecurity) TableName() string {
+	return "user_security"
 }
