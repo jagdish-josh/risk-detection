@@ -78,7 +78,6 @@ func (s *service) CalculateRisk(tx interface{}) (*TransactionRisk, error) {
 
 	var result TransactionRisk
 	result.TransactionID = txID
-	result.Decision = "ALLOW"
 
 	// Calculate risk score
 	riskScore1, err := s.transactionAmountRisk(context.Background(), userID, amount, txTime)
@@ -122,10 +121,32 @@ func (s *service) CalculateRisk(tx interface{}) (*TransactionRisk, error) {
 	}
 
 	result.RiskScore = int(riskScore1 + riskScore2 + int32(riskScore3)) 
-	result.RiskLevel = "HIGH"
+	result.RiskLevel = calculateRiskLevel(result.RiskScore)
+    result.Decision = riskDesion(result.RiskScore)
 	result.EvaluatedAt = time.Now()
 
+    if s.repo.Create(&result) != nil{
+        log.Printf("unable to save risk matrix")
+
+    }
+
 	return &result, nil
+}
+func calculateRiskLevel(riskScore int)(string){
+    if riskScore <= 30 {
+        return "LOW"
+    }else if riskScore <= 70{
+        return "MEDIUM"
+    }
+    return "HIGH"
+}
+func riskDesion(riskScore int)(string){
+    if riskScore <= 30 {
+        return "ALLOW"
+    }else if riskScore <= 70{
+        return "FLAG"
+    }
+    return "BLOCK"
 }
 
 func (s *service) transactionAmountRisk(
