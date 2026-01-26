@@ -1,49 +1,51 @@
 package main
 
 import (
-    "fmt"
-    "log"
-    "os"
-    "time"
+	"fmt"
+	"log"
+	"os"
+	"time"
 
-    "risk-detection/internal/auth"
-    "risk-detection/internal/db"
-    "risk-detection/internal/risk"
-    customrouter "risk-detection/internal/router"
-    "risk-detection/internal/transaction"
+	"risk-detection/internal/auth"
+	"risk-detection/internal/db"
+	"risk-detection/internal/risk"
+	"risk-detection/internal/risk/cronjob"
+	customrouter "risk-detection/internal/router"
+	"risk-detection/internal/transaction"
 
-    "github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin"
 )
 
 func main() {
 
-    router := gin.New()
+	router := gin.New()
 
-    DB, err := db.Connect()
+	DB, err := db.Connect()
 
-    if err != nil {
-        log.Fatalf("Failed to connect to database: %v", err)
-    }
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
 
-    jwtSecret := os.Getenv("JWT_SECRET")
-    if jwtSecret == "" {
-        log.Fatal("JWT_SECRET environment variable is not set")
-    }
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		log.Fatal("JWT_SECRET environment variable is not set")
+	}
 
-    authRepo := auth.NewRepository(DB)
-    authService := auth.NewService(authRepo, jwtSecret, time.Hour)
-    authHandler := auth.NewHandler(authService)
+	authRepo := auth.NewRepository(DB)
+	authService := auth.NewService(authRepo, jwtSecret, time.Hour)
+	authHandler := auth.NewHandler(authService)
 
-    transactionRepo := transaction.NewRepository(DB)
-    
-    riskRepo := risk.NewRepository(DB)
-    riskService := risk.NewService(riskRepo, transactionRepo.(risk.TransactionRepository)) // Inject transaction repo
+	transactionRepo := transaction.NewRepository(DB)
 
-    transactionService := transaction.NewService(transactionRepo, riskService)
-    transactionHandler := transaction.NewHandler(transactionService)
+	riskRepo := risk.NewRepository(DB)
+	riskService := risk.NewService(riskRepo, nil) 
+	cronjob.NewParameterUpdater(riskRepo)
 
-    customrouter.RegisterRoutes(router, authHandler, transactionHandler, jwtSecret)
+	transactionService := transaction.NewService(transactionRepo, riskService)
+	transactionHandler := transaction.NewHandler(transactionService)
 
-    fmt.Println("Connected to database")
-    router.Run()
+	customrouter.RegisterRoutes(router, authHandler, transactionHandler, jwtSecret)
+
+	fmt.Println("Connected to database")
+	router.Run()
 }
