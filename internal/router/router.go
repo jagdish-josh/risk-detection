@@ -24,4 +24,5 @@ func RegisterRoutes(router *gin.Engine,
 	api.Use(middleware.JWTAuthMiddleware(jwtSecret))
 
 	api.POST("/transaction", transactionHandler.HandleTransaction)
+	api.GET("/transactions", transactionHandler.GetTransactions)
 }

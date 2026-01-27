@@ -2,8 +2,12 @@ package transaction
 
 import (
 	"fmt"
+	"context"
+
 	"risk-detection/internal/audit"
 	"risk-detection/internal/risk"
+
+	"github.com/google/uuid"
 )
 
 type service struct {
@@ -77,6 +81,33 @@ func (s *service) CalculateRiskMatrix(tx *Transaction) (*TransactionRiskResponse
 
 	return response, nil
 }
+func (s *service) GetTransactions(
+	ctx context.Context,
+	userID uuid.UUID,
+	offset int,
+	limit int,
+) ([]*Transaction, int64, error) {
+
+	if limit <= 0 {
+		limit = 10
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	transactions, err := s.repo.GetTransactions(ctx, userID, offset, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	total, err := s.repo.CountTotalTransaction(ctx, userID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return transactions, total, nil
+}
+
 
 // mapDecisionToStatus converts risk decision to transaction status
 func (s *service) mapDecisionToStatus(decision string) string {

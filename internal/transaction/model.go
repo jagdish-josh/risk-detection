@@ -47,12 +47,15 @@ type Repository interface {
 	GetByID(id uuid.UUID) (*Transaction, error)
 	Create(tx *Transaction) error
 	UpdateStatusByID(id uuid.UUID, status string) error
-	CountTransactionFrequency(ctx context.Context,  userID uuid.UUID, duration int32,)(float64, error)
-	
+	CountTransactionFrequency(ctx context.Context, userID uuid.UUID, duration int32,) (float64, error)
+	GetTransactions(ctx context.Context, userID uuid.UUID, offset int, limit int,) ([]*Transaction, error)
+	CountTotalTransaction(ctx context.Context, userID uuid.UUID,) (int64, error)
 }
 
 type Service interface {
 	CalculateRiskMatrix(tx *Transaction) (*TransactionRiskResponse, error)
+	GetTransactions(ctx context.Context, userID uuid.UUID, offset int, limit int,)([]*Transaction, int64, error)
+	
 
 }
 
