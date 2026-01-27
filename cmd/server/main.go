@@ -46,7 +46,7 @@ func main() {
 	transactionRepo := transaction.NewRepository(DB)
 
 	riskRepo := risk.NewRepository(DB)
-	riskService, err := risk.NewService(riskRepo, transactionRepo)
+	riskService, err := risk.NewService(riskRepo, transactionRepo, auditLogger)
     if err !=  nil {
         log.Fatal("unble to load rules in risks")
     }

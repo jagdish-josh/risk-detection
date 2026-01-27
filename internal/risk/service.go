@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"reflect"
+	"risk-detection/internal/audit"
 	"sync"
 	"time"
 
@@ -23,13 +24,15 @@ type service struct {
 	transactionRepo TransactionRepository
 	rules           map[string]RiskRule
 	mu              sync.RWMutex
+	auditLog        *audit.Logger
 }
 
-func NewService(repo TransactionRiskRepository, transactionRepo TransactionRepository) (Service, error) {
+func NewService(repo TransactionRiskRepository, transactionRepo TransactionRepository, auditLog *audit.Logger) (Service, error) {
 
 	s := &service{
 		repo:            repo,
 		transactionRepo: transactionRepo,
+		auditLog:        auditLog,
 		rules:           make(map[string]RiskRule),
 	}
 	if err := s.ReloadRules(context.Background()); err != nil {
@@ -59,8 +62,10 @@ func (s *service) ReloadRules(ctx context.Context) error {
 
 func (s *service) CalculateRisk(tx interface{}) (*TransactionRisk, error) {
 
-    txdto, err := ExtractTxContext(tx)
-    if err != nil {log.Fatal("Unable to extract transaction Interface data")}
+	txdto, err := ExtractTxContext(tx)
+	if err != nil {
+		log.Fatal("Unable to extract transaction Interface data")
+	}
 
 	var result TransactionRisk
 	result.TransactionID = txdto.TxID
@@ -103,6 +108,17 @@ func (s *service) CalculateRisk(tx interface{}) (*TransactionRisk, error) {
 		log.Printf("unable to save risk matrix")
 
 	}
+	s.auditLog.Log(audit.AuditLog{
+		EventType:  audit.EventRiskEvaluated,
+		Action:     "EVALUATE",
+		EntityType: "risk_evaluations",
+		EntityID:   result.TransactionID.String(),
+		ActorType:  "SYSTEM",
+		RiskScore:  &result.RiskScore,
+		RiskLevel:  &result.RiskLevel,
+		Decision:   &result.Decision,
+		Status:     "SUCCESS",
+	})
 
 	// Fetch behavior to update it
 	behavior, err := s.repo.GetBehaviorByUserID(context.Background(), txdto.UserID)
@@ -124,14 +140,13 @@ func (s *service) CalculateRisk(tx interface{}) (*TransactionRisk, error) {
 	}
 
 	// Update behavior after transaction
-	if err := s.UpdateUserBehaviorAfterTransaction(context.Background(), behavior, txdto.Amount, txdto.TxTime); err != nil {
+	if err := s.UpdateUserBehaviorAfterTransaction(context.Background(), behavior, txdto.Amount,txdto.TxID, txdto.TxTime); err != nil {
 		log.Printf("unable to update user behavior: %v", err)
 		return nil, err
 	}
 
 	return &result, nil
 }
-
 
 func ExtractTxContext(tx any) (TransactionDTO, error) {
 	var dto TransactionDTO
@@ -178,7 +193,6 @@ func ExtractTxContext(tx any) (TransactionDTO, error) {
 
 	return dto, nil
 }
-
 
 func applyRule(rawScore int, rule RiskRule) int {
 	if !rule.Enabled {
@@ -410,19 +424,30 @@ func (s *service) UpdateUserBehaviorAfterTransaction(
 	ctx context.Context,
 	behavior *UserBehavior,
 	amount float64,
+	txID uuid.UUID,
 	txTime time.Time,
 ) error {
+
+	// ---------- Capture OLD values for audit ----------
+	oldValues := map[string]interface{}{
+		"total_transactions":       behavior.TotalTransactions,
+		"avg_transaction_amount":   behavior.AvgTransactionAmount,
+		"amount_variance":          behavior.AmountVariance,
+		"amount_std_dev":           behavior.AmountStdDev,
+		"recent_avg_amount":        behavior.RecentAvgAmount,
+		"high_value_threshold":     behavior.HighValueThreshold,
+		"last_transaction_amount":  behavior.LastTransactionAmount,
+		"last_transaction_time":    behavior.LastTransactionTime,
+	}
 
 	// ---------- 1. Increment transaction count ----------
 	behavior.TotalTransactions++
 
 	// ---------- 2. Update Average (incremental mean) ----------
-	// newAvg = oldAvg + (x - oldAvg) / n
 	delta := amount - behavior.AvgTransactionAmount
 	behavior.AvgTransactionAmount += delta / float64(behavior.TotalTransactions)
 
 	// ---------- 3. Update Variance (Welford’s algorithm) ----------
-	// variance_acc += delta * (x - newAvg)
 	behavior.AmountVarianceAcc += delta * (amount - behavior.AvgTransactionAmount)
 
 	if behavior.TotalTransactions > 1 {
@@ -445,8 +470,7 @@ func (s *service) UpdateUserBehaviorAfterTransaction(
 			alpha*amount + (1-alpha)*behavior.RecentAvgAmount
 	}
 
-	// ---------- 5. Update High Value Threshold (approx p95) ----------
-	// Simple adaptive threshold (good enough for online systems)
+	// ---------- 5. Update High Value Threshold ----------
 	if behavior.HighValueThreshold == 0 {
 		behavior.HighValueThreshold = amount
 	} else if amount > behavior.HighValueThreshold {
@@ -459,16 +483,40 @@ func (s *service) UpdateUserBehaviorAfterTransaction(
 	behavior.LastTransactionTime = &txTime
 	behavior.UpdatedAt = time.Now()
 
-	// ---------- 7. Persist ----------
-	err := s.repo.UpdateBehaviorPerTransaction(ctx, behavior)
-
-	if err != nil {
+	// ---------- Persist ----------
+	if err := s.repo.UpdateBehaviorPerTransaction(ctx, behavior); err != nil {
 		log.Printf("unable to update behavior parameter: %v", err)
 		return err
 	}
 
+	// ---------- Capture NEW values for audit ----------
+	newValues := map[string]interface{}{
+		"total_transactions":       behavior.TotalTransactions,
+		"avg_transaction_amount":   behavior.AvgTransactionAmount,
+		"amount_variance":          behavior.AmountVariance,
+		"amount_std_dev":           behavior.AmountStdDev,
+		"recent_avg_amount":        behavior.RecentAvgAmount,
+		"high_value_threshold":     behavior.HighValueThreshold,
+		"last_transaction_amount":  behavior.LastTransactionAmount,
+		"last_transaction_time":    behavior.LastTransactionTime,
+	}
+
+	// ---------- Audit log ----------
+	s.auditLog.Log(audit.AuditLog{
+		EventType:     audit.EventUserBehaviorUpdated,
+		Action:        "UPDATE",
+		EntityType:    "user_behavior",
+		EntityID:      behavior.UserID.String(),
+		ActorType:     "SYSTEM",
+		TransactionID: txID.String(),
+		OldValues:     oldValues,
+		NewValues:     newValues,
+		Status:        "SUCCESS",
+	})
+
 	return nil
 }
+
 
 func (s *service) CreateUserBehavior(ctx context.Context, userID uuid.UUID) error {
 	behavior := &UserBehavior{
@@ -490,6 +538,17 @@ func (s *service) CreateUserBehavior(ctx context.Context, userID uuid.UUID) erro
 		log.Printf("unable to create user behavior: %v", err)
 		return err
 	}
+	s.auditLog.Log(audit.AuditLog{
 
+		EventType:  audit.EventUserBehaviorCreated,
+		Action:     "CREATE",
+		EntityType: "user_behavior",
+		EntityID:   userID.String(),
+		ActorType:  "SYSTEM",
+		NewValues: map[string]interface{}{
+			"total_transactions": 1,
+			"ema_smoothing_factor": 0.1,
+		},
+	})
 	return nil
 }
