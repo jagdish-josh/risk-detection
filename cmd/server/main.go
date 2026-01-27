@@ -40,7 +40,7 @@ func main() {
     }
 
 	authRepo := auth.NewRepository(DB)
-	authService := auth.NewService(authRepo, jwtSecret, time.Hour)
+	authService := auth.NewService(authRepo, auditLogger, jwtSecret, time.Hour)
 	authHandler := auth.NewHandler(authService)
 
 	transactionRepo := transaction.NewRepository(DB)

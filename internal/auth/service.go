@@ -7,6 +7,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+	"risk-detection/internal/audit"
 )
 
 var (
@@ -19,11 +20,13 @@ type service struct {
 	repo      Repository
 	jwtSecret string
 	jwtTTL    time.Duration
+	auditLog  *audit.Logger
 }
 
-func NewService(repo Repository, jwtSecret string, jwtTTL time.Duration) Service {
+func NewService(repo Repository, auditLog *audit.Logger, jwtSecret string, jwtTTL time.Duration) Service {
 	return &service{
 		repo:      repo,
+		auditLog:  auditLog,
 		jwtSecret: jwtSecret,
 		jwtTTL:    jwtTTL,
 	}
@@ -71,6 +74,16 @@ func (s *service) Signup(req SignupRequest, ipAddress string) (SignupResponse, e
 	if err := s.repo.UpdateUserSecurity(user.ID, req.DeviceID, ipAddress); err != nil {
 		return SignupResponse{}, fmt.Errorf("update security: %w", err)
 	}
+	s.auditLog.Log(audit.AuditLog{
+		EventType:  audit.EventSecurityUpdated,
+		Action:     "CREATE",
+		EntityType: "user_security",
+		EntityID:   existingUser.ID.String(),
+		ActorType:  "SYSTEM",
+		NewValues: map[string]interface{}{
+			"device_id": req.DeviceID,
+		},
+	})
 
 	return SignupResponse{
 		UserID:      user.ID,
@@ -107,6 +120,23 @@ func (s *service) Login(req LoginRequest, ipAddress string) (LoginResponse, erro
 	if err := s.repo.UpdateUserSecurity(user.ID, req.DeviceID, ipAddress); err != nil {
 		return LoginResponse{}, fmt.Errorf("update security: %w", err)
 	}
+	s.auditLog.Log(audit.AuditLog{
+		EventType:  audit.EventSecurityUpdated,
+		Action:     "UPDATE",
+		EntityType: "user_security",
+		EntityID:   user.ID.String(),
+		ActorType:  "SYSTEM",
+		NewValues: map[string]interface{}{
+			"device_id": req.DeviceID,
+		},
+	})
+	s.auditLog.Log(audit.AuditLog{
+		EventType:  audit.EventUserLogin,
+		Action:     "LOGIN",
+		EntityType: "users",
+		EntityID:   user.ID.String(),
+		Status:     "SUCCESS",
+	})
 
 	return LoginResponse{
 		AccessToken: token,
