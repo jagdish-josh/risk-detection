@@ -61,6 +61,23 @@ type TransactionRiskRepository interface {
 	UpdateBehaviorPerTransaction(ctx context.Context, behavior *UserBehavior) error
 	CreateFirstBehavior(ctx context.Context, behavior *UserBehavior) error
 	GetDeviceInfo(ctx context.Context,  userID uuid.UUID)(*UserSecurity, error)
+	GetEnabledRules(ctx context.Context) ([]RiskRule, error)
+}
+type RiskRule struct {
+	ID        int64
+	Name      string
+	Threshold int
+	Weight    int
+	Enabled   bool
+}
+
+type TransactionDTO struct {
+	TxID      uuid.UUID
+	UserID    uuid.UUID
+	Amount    float64
+	TxTime    time.Time
+	DeviceID  string
+	IPAddress string
 }
 
 type Service interface {
@@ -72,4 +89,7 @@ func (UserBehavior) TableName() string {
 }
 func (UserSecurity) TableName() string {
 	return "user_security"
+}
+func (RiskRule) TableName() string {
+	return "rules"
 }

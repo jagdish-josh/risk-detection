@@ -103,11 +103,18 @@ func (r *repository) CreateFirstBehavior(ctx context.Context, behavior *UserBeha
 	return r.db.WithContext(ctx).Create(behavior).Error
 }
 
-func (r *repository) GetDeviceInfo(ctx context.Context,  userID uuid.UUID)(*UserSecurity, error){
+func (r *repository) GetDeviceInfo(ctx context.Context, userID uuid.UUID) (*UserSecurity, error) {
 	var userSecurity UserSecurity
 	if err := r.db.First(&userSecurity, "user_id = ?", userID).Error; err != nil {
 		return nil, err
 	}
 	return &userSecurity, nil
+}
+func (r *repository) GetEnabledRules(ctx context.Context) ([]RiskRule, error) {
+	var rules []RiskRule
+	err := r.db.WithContext(ctx).
+		Where("enabled = true").
+		Find(&rules).Error
+	return rules, err
 }
 

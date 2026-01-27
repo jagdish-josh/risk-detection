@@ -15,138 +15,202 @@ import (
 
 // TransactionRepository interface - abstraction to avoid circular dependency
 type TransactionRepository interface {
-	
-    CountTransactionFrequency(tx context.Context, userID uuid.UUID, duration int32)(float64, error)
+	CountTransactionFrequency(tx context.Context, userID uuid.UUID, duration int32) (float64, error)
 }
 
 type service struct {
 	repo            TransactionRiskRepository
 	transactionRepo TransactionRepository
+	rules           map[string]RiskRule
+	mu              sync.RWMutex
 }
 
-func NewService(repo TransactionRiskRepository, transactionRepo TransactionRepository) Service {
-	return &service{
+func NewService(repo TransactionRiskRepository, transactionRepo TransactionRepository) (Service, error) {
+
+	s := &service{
 		repo:            repo,
 		transactionRepo: transactionRepo,
+		rules:           make(map[string]RiskRule),
 	}
+	if err := s.ReloadRules(context.Background()); err != nil {
+		return nil, err
+	}
+
+	return s, nil
+}
+
+func (s *service) ReloadRules(ctx context.Context) error {
+	rules, err := s.repo.GetEnabledRules(ctx)
+	if err != nil {
+		return err
+	}
+
+	m := make(map[string]RiskRule)
+	for _, r := range rules {
+		m[r.Name] = r
+	}
+
+	s.mu.Lock()
+	s.rules = m
+	s.mu.Unlock()
+
+	return nil
 }
 
 func (s *service) CalculateRisk(tx interface{}) (*TransactionRisk, error) {
 
-
-	// Use reflection to extract transaction fields
-	val := reflect.ValueOf(tx)
-	if val.Kind() == reflect.Ptr {
-		val = val.Elem()
-	}
-
-	var userID uuid.UUID
-	var amount float64
-	var txTime time.Time
-	var txID uuid.UUID
-    var txDeviceID string
-    var txIpAddress string
-
-	// Extract UserID
-	if userIDField := val.FieldByName("UserID"); userIDField.IsValid() {
-		userID = userIDField.Interface().(uuid.UUID)
-	}
-
-	// Extract Amount
-	if amountField := val.FieldByName("Amount"); amountField.IsValid() {
-		amount = amountField.Interface().(float64)
-	}
-
-	// Extract TransactionTime
-	if timeField := val.FieldByName("TransactionTime"); timeField.IsValid() {
-		txTime = timeField.Interface().(time.Time)
-	}
-
-	// Extract ID
-	if idField := val.FieldByName("ID"); idField.IsValid() {
-		txID = idField.Interface().(uuid.UUID)
-	}
-
-    // Device ID
-    if deviceID := val.FieldByName("DeviceID"); deviceID.IsValid(){
-        txDeviceID = deviceID.Interface().(string)
-    }
-
-    if ipAddress := val.FieldByName("IpAdress"); ipAddress.IsValid(){
-        txIpAddress = ipAddress.Interface().(string)
-    }
+    txdto, err := ExtractTxContext(tx)
+    if err != nil {log.Fatal("Unable to extract transaction Interface data")}
 
 	var result TransactionRisk
-	result.TransactionID = txID
+	result.TransactionID = txdto.TxID
 
 	// Calculate risk score
-	riskScore1, err := s.transactionAmountRisk(context.Background(), userID, amount, txTime)
+	riskScore1, err := s.transactionAmountRisk(context.Background(), txdto.UserID, txdto.Amount, txdto.TxTime)
 	if err != nil {
 		return nil, err
 	}
 
-    riskScore2, err := s.transactionDeviceRisk(context.Background(), userID, txDeviceID, txIpAddress)
-    if err != nil {
+	riskScore2, err := s.transactionDeviceRisk(context.Background(), txdto.UserID, txdto.DeviceID, txdto.IPAddress)
+	if err != nil {
 		return nil, err
 	}
-    riskScore3, err := s.transactionFrequencyRisk(context.Background(), userID)
+	riskScore3, err := s.transactionFrequencyRisk(context.Background(), txdto.UserID)
 
-    if err != nil {
-        return nil, err
-    }
+	if err != nil {
+		return nil, err
+	}
+	totalRisk := 0
+
+	if rule, ok := s.getRule("TRANSACTION_AMOUNT_RISK"); ok {
+		totalRisk += applyRule(int(riskScore1), rule)
+	}
+
+	if rule, ok := s.getRule("NEW_DEVICE_RISK"); ok {
+		totalRisk += applyRule(int(riskScore2), rule)
+	}
+
+	if rule, ok := s.getRule("TRANSACTION_FREQUENCY_RISK"); ok {
+		totalRisk += applyRule(int(riskScore3), rule)
+	}
+
+	result.RiskScore = int(totalRisk)
+	result.RiskLevel = calculateRiskLevel(result.RiskScore)
+	result.Decision = riskDesion(result.RiskScore)
+	result.EvaluatedAt = time.Now()
+
+	if s.repo.Create(&result) != nil {
+		log.Printf("unable to save risk matrix")
+
+	}
 
 	// Fetch behavior to update it
-	behavior, err := s.repo.GetBehaviorByUserID(context.Background(), userID)
+	behavior, err := s.repo.GetBehaviorByUserID(context.Background(), txdto.UserID)
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 
-	// If behavior doesn't exist, create it
+	// fetch beIf behavior doesn't exist, create it
 	if behavior == nil {
-		if err := s.CreateUserBehavior(context.Background(), userID); err != nil {
+		if err := s.CreateUserBehavior(context.Background(), txdto.UserID); err != nil {
 			log.Printf("failed to create user behavior: %v", err)
 			return nil, err
 		}
 		// Fetch the newly created behavior
-		behavior, err = s.repo.GetBehaviorByUserID(context.Background(), userID)
+		behavior, err = s.repo.GetBehaviorByUserID(context.Background(), txdto.UserID)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	// Update behavior after transaction
-	if err := s.UpdateUserBehaviorAfterTransaction(context.Background(), behavior, amount, txTime); err != nil {
+	if err := s.UpdateUserBehaviorAfterTransaction(context.Background(), behavior, txdto.Amount, txdto.TxTime); err != nil {
 		log.Printf("unable to update user behavior: %v", err)
 		return nil, err
 	}
 
-	result.RiskScore = int(riskScore1 + riskScore2 + int32(riskScore3)) 
-	result.RiskLevel = calculateRiskLevel(result.RiskScore)
-    result.Decision = riskDesion(result.RiskScore)
-	result.EvaluatedAt = time.Now()
-
-    if s.repo.Create(&result) != nil{
-        log.Printf("unable to save risk matrix")
-
-    }
-
 	return &result, nil
 }
-func calculateRiskLevel(riskScore int)(string){
-    if riskScore <= 30 {
-        return "LOW"
-    }else if riskScore <= 70{
-        return "MEDIUM"
-    }
-    return "HIGH"
+
+
+func ExtractTxContext(tx any) (TransactionDTO, error) {
+	var dto TransactionDTO
+
+	val := reflect.ValueOf(tx)
+	if !val.IsValid() {
+		return dto, errors.New("nil transaction")
+	}
+
+	if val.Kind() == reflect.Ptr {
+		if val.IsNil() {
+			return dto, errors.New("nil transaction pointer")
+		}
+		val = val.Elem()
+	}
+
+	if val.Kind() != reflect.Struct {
+		return dto, errors.New("transaction must be a struct")
+	}
+
+	if f := val.FieldByName("ID"); f.IsValid() && f.CanInterface() {
+		dto.TxID, _ = f.Interface().(uuid.UUID)
+	}
+
+	if f := val.FieldByName("UserID"); f.IsValid() && f.CanInterface() {
+		dto.UserID, _ = f.Interface().(uuid.UUID)
+	}
+
+	if f := val.FieldByName("Amount"); f.IsValid() && f.CanInterface() {
+		dto.Amount, _ = f.Interface().(float64)
+	}
+
+	if f := val.FieldByName("TransactionTime"); f.IsValid() && f.CanInterface() {
+		dto.TxTime, _ = f.Interface().(time.Time)
+	}
+
+	if f := val.FieldByName("DeviceID"); f.IsValid() && f.CanInterface() {
+		dto.DeviceID, _ = f.Interface().(string)
+	}
+
+	if f := val.FieldByName("IpAdress"); f.IsValid() && f.CanInterface() {
+		dto.IPAddress, _ = f.Interface().(string)
+	}
+
+	return dto, nil
 }
-func riskDesion(riskScore int)(string){
-    if riskScore <= 30 {
-        return "ALLOW"
-    }else if riskScore <= 70{
-        return "FLAG"
-    }
-    return "BLOCK"
+
+
+func applyRule(rawScore int, rule RiskRule) int {
+	if !rule.Enabled {
+		return 0
+	}
+	if rawScore < rule.Threshold {
+		return 0
+	}
+	return rule.Weight
+}
+func (s *service) getRule(name string) (RiskRule, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	r, ok := s.rules[name]
+	return r, ok
+}
+func calculateRiskLevel(riskScore int) string {
+	if riskScore <= 30 {
+		return "LOW"
+	} else if riskScore <= 70 {
+		return "MEDIUM"
+	}
+	return "HIGH"
+}
+func riskDesion(riskScore int) string {
+	if riskScore <= 30 {
+		return "ALLOW"
+	} else if riskScore <= 70 {
+		return "FLAG"
+	}
+	return "BLOCK"
 }
 
 func (s *service) transactionAmountRisk(
@@ -155,7 +219,7 @@ func (s *service) transactionAmountRisk(
 	amount float64,
 	txTime time.Time,
 ) (int32, error) {
-    log.Println("transaction amount risk triggerd")
+	log.Println("transaction amount risk triggerd")
 
 	behavior, err := s.repo.GetBehaviorByUserID(ctx, userID)
 	if err != nil {
@@ -295,51 +359,51 @@ func (s *service) transactionAmountRisk(
 	return riskScore, nil
 }
 func (s *service) transactionDeviceRisk(ctx context.Context, userID uuid.UUID, txDeviceID string, txIpAddress string) (int32, error) {
-    log.Println("device security risk triggered")
-    
-    // Return 0 if no device ID provided
-    if txDeviceID == "" {
-        return 0, nil
-    }
-    
-    deviceInfo, err := s.repo.GetDeviceInfo(context.Background(), userID)
-    if err != nil {
-        log.Printf("unable to get device information: %v", err)
-        // Return moderate risk if device info not found
-        return 20, nil
-    }
+	log.Println("device security risk triggered")
 
-    // Nil check for deviceInfo
-    if deviceInfo == nil {
-        return 20, nil
-    }
+	// Return 0 if no device ID provided
+	if txDeviceID == "" {
+		return 0, nil
+	}
 
-    deviceID := deviceInfo.DeviceID
+	deviceInfo, err := s.repo.GetDeviceInfo(context.Background(), userID)
+	if err != nil {
+		log.Printf("unable to get device information: %v", err)
+		// Return moderate risk if device info not found
+		return 20, nil
+	}
 
-    if deviceID == txDeviceID {
-        return 0, nil
-    }
-    return 100, nil
+	// Nil check for deviceInfo
+	if deviceInfo == nil {
+		return 20, nil
+	}
+
+	deviceID := deviceInfo.DeviceID
+
+	if deviceID == txDeviceID {
+		return 0, nil
+	}
+	return 100, nil
 }
 
 func (s *service) transactionFrequencyRisk(ctx context.Context, userID uuid.UUID) (float64, error) {
-    log.Println("high frequency in short duration risk triggered")
-    
-    // Check if transaction repo is nil
-    if s.transactionRepo == nil {
-        log.Printf("transaction repository is nil, skipping frequency risk check")
-        return 0, nil
-    }
-    
-    count, err := s.transactionRepo.CountTransactionFrequency(ctx, userID, 5)
-    if err != nil {
-        log.Printf("unable to count frequency: %v", err)
-        return 0, nil
-    }
-    
-    // Convert int64 to float64 and apply risk calculation
-    riskScore := float64(count) * 10
-    return math.Min(100, riskScore), nil
+	log.Println("high frequency in short duration risk triggered")
+
+	// Check if transaction repo is nil
+	if s.transactionRepo == nil {
+		log.Printf("transaction repository is nil, skipping frequency risk check")
+		return 0, nil
+	}
+
+	count, err := s.transactionRepo.CountTransactionFrequency(ctx, userID, 5)
+	if err != nil {
+		log.Printf("unable to count frequency: %v", err)
+		return 0, nil
+	}
+
+	// Convert int64 to float64 and apply risk calculation
+	riskScore := float64(count) * 10
+	return math.Min(100, riskScore), nil
 }
 
 func (s *service) UpdateUserBehaviorAfterTransaction(

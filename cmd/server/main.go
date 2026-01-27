@@ -38,7 +38,11 @@ func main() {
 	transactionRepo := transaction.NewRepository(DB)
 
 	riskRepo := risk.NewRepository(DB)
-	riskService := risk.NewService(riskRepo, transactionRepo)
+	riskService, err := risk.NewService(riskRepo, transactionRepo)
+    if err !=  nil {
+        log.Fatal("unble to load rules in risks")
+    }
+    
 	cronjob.NewParameterUpdater(riskRepo)
 
 	transactionService := transaction.NewService(transactionRepo, riskService)
