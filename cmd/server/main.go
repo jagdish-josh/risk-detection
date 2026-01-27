@@ -12,6 +12,7 @@ import (
 	"risk-detection/internal/risk/cronjob"
 	customrouter "risk-detection/internal/router"
 	"risk-detection/internal/transaction"
+    "risk-detection/internal/audit"
 
 	"github.com/gin-gonic/gin"
 )
@@ -31,6 +32,13 @@ func main() {
 		log.Fatal("JWT_SECRET environment variable is not set")
 	}
 
+    auditLogger, err := audit.NewLogger("internal/audit/file.log")
+    defer auditLogger.Close()
+
+    if err != nil {
+        log.Fatal(err)
+    }
+
 	authRepo := auth.NewRepository(DB)
 	authService := auth.NewService(authRepo, jwtSecret, time.Hour)
 	authHandler := auth.NewHandler(authService)
@@ -42,10 +50,10 @@ func main() {
     if err !=  nil {
         log.Fatal("unble to load rules in risks")
     }
-    
+
 	cronjob.NewParameterUpdater(riskRepo)
 
-	transactionService := transaction.NewService(transactionRepo, riskService)
+	transactionService := transaction.NewService(transactionRepo, riskService, auditLogger)
 	transactionHandler := transaction.NewHandler(transactionService)
 
 	customrouter.RegisterRoutes(router, authHandler, transactionHandler, jwtSecret)
