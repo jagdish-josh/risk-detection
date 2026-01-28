@@ -7,6 +7,7 @@ import (
 	"time"
 
 	// "github.com/google/uuid"
+	"risk-detection/internal/audit"
 	"risk-detection/internal/risk"
 )
 
@@ -15,14 +16,16 @@ const (
 	varianceDecay = 0.995
 )
 
-
-
 type ParameterUpdater struct {
-	repo risk.TransactionRiskRepository
+	repo     risk.TransactionRiskRepository
+	auditLog *audit.Logger
 }
 
-func NewParameterUpdater(repo risk.TransactionRiskRepository) *ParameterUpdater {
-	return &ParameterUpdater{repo: repo}
+func NewParameterUpdater(repo risk.TransactionRiskRepository, auditLog *audit.Logger) *ParameterUpdater {
+	return &ParameterUpdater{
+		repo:     repo,
+		auditLog: auditLog,
+	}
 }
 
 func (p *ParameterUpdater) UpdateDailyBehavior(
@@ -41,6 +44,7 @@ func (p *ParameterUpdater) UpdateDailyBehavior(
 	for _, r := range rows {
 
 		// Approximate rolling variance using decay
+		log.Println("update daily trigger")
 		variance := (r.AvgAmount * r.AvgAmount) * (1 - varianceDecay)
 		stdDev := math.Sqrt(variance)
 
@@ -56,7 +60,29 @@ func (p *ParameterUpdater) UpdateDailyBehavior(
 				"[RISK][CRON] failed for user %s: %v",
 				r.UserID, err,
 			)
+
+			p.auditLog.Log(audit.AuditLog{
+				EventType:  audit.EventUserBehaviorUpdated,
+				Action:     "UPDATE",
+				EntityType: "user_behavior",
+				EntityID:   r.UserID.String(),
+				ActorType:  "SYSTEM",
+				Status:     "FAILURE",
+			})
 		}
+		newValues := map[string]interface{}{
+			"amount_std_dev":       stdDev,
+			"high_value_treshould": r.P95Amount,
+		}
+		p.auditLog.Log(audit.AuditLog{
+			EventType:  audit.EventUserBehaviorUpdated,
+			Action:     "UPDATE",
+			EntityType: "user_behavior",
+			EntityID:   r.UserID.String(),
+			ActorType:  "SYSTEM",
+			NewValues:  newValues,
+			Status:     "SUCCESS",
+		})
 	}
 
 	return nil

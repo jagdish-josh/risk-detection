@@ -1,18 +1,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
 	"time"
 
+	"risk-detection/internal/audit"
 	"risk-detection/internal/auth"
 	"risk-detection/internal/db"
 	"risk-detection/internal/risk"
 	"risk-detection/internal/risk/cronjob"
 	customrouter "risk-detection/internal/router"
 	"risk-detection/internal/transaction"
-    "risk-detection/internal/audit"
 
 	"github.com/gin-gonic/gin"
 )
@@ -20,6 +21,7 @@ import (
 func main() {
 
 	router := gin.New()
+	ctx := context.Background()
 
 	DB, err := db.Connect()
 
@@ -51,7 +53,8 @@ func main() {
         log.Fatal("unble to load rules in risks")
     }
 
-	cronjob.NewParameterUpdater(riskRepo)
+	updater := cronjob.NewParameterUpdater(riskRepo ,auditLogger)
+	cronjob.StartBehaviorCron(ctx, updater)
 
 	transactionService := transaction.NewService(transactionRepo, riskService, auditLogger)
 	transactionHandler := transaction.NewHandler(transactionService)
