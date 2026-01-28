@@ -1,8 +1,8 @@
 package transaction
 
 import (
-	"fmt"
 	"context"
+	"fmt"
 
 	"risk-detection/internal/audit"
 	"risk-detection/internal/risk"
@@ -30,16 +30,19 @@ func (s *service) CalculateRiskMatrix(tx *Transaction) (*TransactionRiskResponse
 		return nil, fmt.Errorf("failed to create transaction: %w", err)
 	}
 
-	//transaction creation log
-	s.auditLog.Log(audit.AuditLog{
-		EventType:  audit.EventTransactionCreated,
-		ActorID:    tx.ID.String(),
-		EntityType: "users",
-		EntityID:   tx.UserID.String(),
-		Status:     "SUCCESS",
-		IPAddress:  tx.IPAddress,
-		DeviceID:   tx.DeviceID,
-	})
+	if s.auditLog != nil {
+
+		//transaction creation log
+		s.auditLog.Log(audit.AuditLog{
+			EventType:  audit.EventTransactionCreated,
+			ActorID:    tx.ID.String(),
+			EntityType: "users",
+			EntityID:   tx.UserID.String(),
+			Status:     "SUCCESS",
+			IPAddress:  tx.IPAddress,
+			DeviceID:   tx.DeviceID,
+		})
+	}
 
 	// Step 2: Calculate risk score from risk service
 	riskResult, err := s.riskService.CalculateRisk(tx)
@@ -55,6 +58,8 @@ func (s *service) CalculateRiskMatrix(tx *Transaction) (*TransactionRiskResponse
 	if err := s.repo.UpdateStatusByID(tx.ID, newStatus); err != nil {
 		return nil, fmt.Errorf("failed to update transaction status: %w", err)
 	}
+
+	if s.auditLog != nil {
 	s.auditLog.Log(audit.AuditLog{
 		EventType:  audit.EventTransactionUpdated,
 		Action:     "UPDATE",
@@ -68,7 +73,7 @@ func (s *service) CalculateRiskMatrix(tx *Transaction) (*TransactionRiskResponse
 			"Status": "PENDING",
 		},
 		Status: "SUCCESS",
-	})
+	})}
 
 	// Step 4: Return formatted risk response to handler
 	response := &TransactionRiskResponse{
@@ -107,7 +112,6 @@ func (s *service) GetTransactions(
 
 	return transactions, total, nil
 }
-
 
 // mapDecisionToStatus converts risk decision to transaction status
 func (s *service) mapDecisionToStatus(decision string) string {
