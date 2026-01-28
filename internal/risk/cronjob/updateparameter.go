@@ -32,7 +32,7 @@ func (p *ParameterUpdater) UpdateDailyBehavior(
 	ctx context.Context,
 	day time.Time,
 ) error {
-
+	log.Println("update daily trigger")
 	from := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
 	to := from.Add(24 * time.Hour)
 
@@ -44,7 +44,7 @@ func (p *ParameterUpdater) UpdateDailyBehavior(
 	for _, r := range rows {
 
 		// Approximate rolling variance using decay
-		log.Println("update daily trigger")
+		
 		variance := (r.AvgAmount * r.AvgAmount) * (1 - varianceDecay)
 		stdDev := math.Sqrt(variance)
 

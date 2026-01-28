@@ -9,6 +9,7 @@ import (
 	"risk-detection/internal/audit"
 	"sync"
 	"time"
+	"runtime/debug"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -64,7 +65,8 @@ func (s *service) CalculateRisk(tx interface{}) (*TransactionRisk, error) {
 
 	txdto, err := ExtractTxContext(tx)
 	if err != nil {
-		log.Fatal("Unable to extract transaction Interface data")
+		log.Printf("unable to extract transaction context: %v", err)
+		return nil, err
 	}
 
 	var result TransactionRisk
@@ -126,23 +128,26 @@ func (s *service) CalculateRisk(tx interface{}) (*TransactionRisk, error) {
 		return nil, err
 	}
 
-	// fetch beIf behavior doesn't exist, create it
+	// If behavior doesn't exist, create it
 	if behavior == nil {
 		if err := s.CreateUserBehavior(context.Background(), txdto.UserID); err != nil {
 			log.Printf("failed to create user behavior: %v", err)
-			return nil, err
+			return &result, nil // Return result even if behavior creation fails
 		}
 		// Fetch the newly created behavior
 		behavior, err = s.repo.GetBehaviorByUserID(context.Background(), txdto.UserID)
 		if err != nil {
-			return nil, err
+			log.Printf("unable to fetch behavior after creation: %v", err)
+			return &result, nil // Return result even if fetch fails
 		}
 	}
 
-	// Update behavior after transaction
-	if err := s.UpdateUserBehaviorAfterTransaction(context.Background(), behavior, txdto.Amount,txdto.TxID, txdto.TxTime); err != nil {
-		log.Printf("unable to update user behavior: %v", err)
-		return nil, err
+	// Update behavior after transaction only if behavior exists
+	if behavior != nil {
+		if err := s.UpdateUserBehaviorAfterTransaction(context.Background(), behavior, txdto.Amount, txdto.TxID, txdto.TxTime); err != nil {
+			log.Printf("unable to update user behavior: %v", err)
+			// Continue even if behavior update fails - risk already calculated
+		}
 	}
 
 	return &result, nil
@@ -150,6 +155,10 @@ func (s *service) CalculateRisk(tx interface{}) (*TransactionRisk, error) {
 
 func ExtractTxContext(tx any) (TransactionDTO, error) {
 	var dto TransactionDTO
+
+	if tx == nil {
+		return dto, errors.New("nil transaction input")
+	}
 
 	val := reflect.ValueOf(tx)
 	if !val.IsValid() {
@@ -198,8 +207,8 @@ func applyRule(rawScore int, rule RiskRule) int {
 	if !rule.Enabled {
 		return 0
 	}
-	
-	return (rule.Weight * rawScore)/100
+
+	return (rule.Weight * rawScore) / 100
 }
 func (s *service) getRule(name string) (RiskRule, bool) {
 	s.mu.RLock()
@@ -225,24 +234,49 @@ func riskDesion(riskScore int) string {
 	return "BLOCK"
 }
 
+func safeGo(wg *sync.WaitGroup, fn func()) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[PANIC][transactionAmountRisk][GOROUTINE] %v\n%s",
+					r, debug.Stack())
+			}
+		}()
+		fn()
+	}()
+}
+
 func (s *service) transactionAmountRisk(
 	ctx context.Context,
 	userID uuid.UUID,
 	amount float64,
 	txTime time.Time,
-) (int32, error) {
-	log.Println("transaction amount risk triggerd")
+) (score int32, err error) {
+
+	// ---- Top-level panic protection ----
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[PANIC][transactionAmountRisk][TOP] %v\n%s",
+				r, debug.Stack())
+			score = 50 // safe fallback score
+			err = nil
+		}
+	}()
+
+	log.Println("transaction amount risk triggered")
 
 	behavior, err := s.repo.GetBehaviorByUserID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			s.CreateUserBehavior(context.Background(), userID)
+			_ = s.CreateUserBehavior(context.Background(), userID)
 			return 20, nil
 		}
 		return 0, err
 	}
 
-	// New user → conservative risk
+	// New / empty user
 	if behavior == nil || behavior.TotalTransactions == 0 {
 		return 20, nil
 	}
@@ -254,112 +288,93 @@ func (s *service) transactionAmountRisk(
 	)
 
 	// ---- Rule 1: Relative Amount (avg) ----
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		if behavior.AvgTransactionAmount > 0 {
-			ratio := amount / behavior.AvgTransactionAmount
-
-			if ratio > 10 {
-				mu.Lock()
-				riskScore += 35
-				mu.Unlock()
-			} else if ratio > 5 {
-				mu.Lock()
-				riskScore += 20
-				mu.Unlock()
-			}
+	safeGo(&wg, func() {
+		if behavior.AvgTransactionAmount <= 0 {
+			return
 		}
-	}()
+		ratio := amount / behavior.AvgTransactionAmount
+		if ratio > 10 {
+			mu.Lock()
+			riskScore += 35
+			mu.Unlock()
+		} else if ratio > 5 {
+			mu.Lock()
+			riskScore += 20
+			mu.Unlock()
+		}
+	})
 
 	// ---- Rule 2: Z-score ----
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		if behavior.AmountStdDev > 0 {
-			z := (amount - behavior.AvgTransactionAmount) / behavior.AmountStdDev
-
-			if z > 3 {
-				mu.Lock()
-				riskScore += 30
-				mu.Unlock()
-			} else if z > 2 {
-				mu.Lock()
-				riskScore += 20
-				mu.Unlock()
-			}
+	safeGo(&wg, func() {
+		if behavior.AmountStdDev <= 0 {
+			return
 		}
-	}()
+		z := (amount - behavior.AvgTransactionAmount) / behavior.AmountStdDev
+		if z > 3 {
+			mu.Lock()
+			riskScore += 30
+			mu.Unlock()
+		} else if z > 2 {
+			mu.Lock()
+			riskScore += 20
+			mu.Unlock()
+		}
+	})
 
 	// ---- Rule 3: EMA deviation ----
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		if behavior.RecentAvgAmount > 0 {
-			ratio := amount / behavior.RecentAvgAmount
-
-			if ratio > 4 {
-				mu.Lock()
-				riskScore += 10
-				mu.Unlock()
-			}
+	safeGo(&wg, func() {
+		if behavior.RecentAvgAmount <= 0 {
+			return
 		}
-	}()
+		if amount/behavior.RecentAvgAmount > 4 {
+			mu.Lock()
+			riskScore += 10
+			mu.Unlock()
+		}
+	})
 
 	// ---- Rule 4: Sudden jump (velocity) ----
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		if behavior.LastTransactionAmount > 0 {
-			velocity :=
-				(amount - behavior.LastTransactionAmount) /
-					behavior.LastTransactionAmount
-
-			if velocity > 3 {
-				mu.Lock()
-				riskScore += 20
-				mu.Unlock()
-			}
+	safeGo(&wg, func() {
+		if behavior.LastTransactionAmount <= 0 {
+			return
 		}
-	}()
+		velocity :=
+			(amount - behavior.LastTransactionAmount) /
+				behavior.LastTransactionAmount
+		if velocity > 3 {
+			mu.Lock()
+			riskScore += 20
+			mu.Unlock()
+		}
+	})
 
 	// ---- Rule 5: High value boundary (p95) ----
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		if behavior.HighValueThreshold > 0 {
-			if amount > 2*behavior.HighValueThreshold {
-				mu.Lock()
-				riskScore += 30
-				mu.Unlock()
-			} else if amount > behavior.HighValueThreshold {
-				mu.Lock()
-				riskScore += 20
-				mu.Unlock()
-			}
+	safeGo(&wg, func() {
+		if behavior.HighValueThreshold <= 0 {
+			return
 		}
-	}()
+		if amount > 2*behavior.HighValueThreshold {
+			mu.Lock()
+			riskScore += 30
+			mu.Unlock()
+		} else if amount > behavior.HighValueThreshold {
+			mu.Lock()
+			riskScore += 20
+			mu.Unlock()
+		}
+	})
 
 	// ---- Rule 6: Back-to-back transactions ----
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		if behavior.LastTransactionTime != nil {
-			diff := txTime.Sub(*behavior.LastTransactionTime)
-
-			if diff.Seconds() < 30 {
-				mu.Lock()
-				riskScore += 20
-				mu.Unlock()
-			}
+	safeGo(&wg, func() {
+		if behavior.LastTransactionTime == nil {
+			return
 		}
-	}()
+		if txTime.Sub(*behavior.LastTransactionTime).Seconds() < 30 {
+			mu.Lock()
+			riskScore += 20
+			mu.Unlock()
+		}
+	})
 
 	wg.Wait()
 
@@ -367,10 +382,10 @@ func (s *service) transactionAmountRisk(
 	if riskScore > 100 {
 		riskScore = 100
 	}
-	log.Println("amoutrisk", riskScore)
 
 	return riskScore, nil
 }
+
 func (s *service) transactionDeviceRisk(ctx context.Context, userID uuid.UUID, txDeviceID string, txIpAddress string) (int32, error) {
 	log.Println("device security risk triggered")
 
@@ -396,7 +411,6 @@ func (s *service) transactionDeviceRisk(ctx context.Context, userID uuid.UUID, t
 	if deviceID == txDeviceID {
 		return 0, nil
 	}
-	log.Println("devicerisk", 100)
 	return 100, nil
 }
 
@@ -414,31 +428,31 @@ func (s *service) transactionFrequencyRisk(ctx context.Context, userID uuid.UUID
 		log.Printf("unable to count frequency: %v", err)
 		return 0, nil
 	}
+	if count == 0 {
+		return 90, nil
+	}
 
 	// Convert int64 to float64 and apply risk calculation
-	riskScore := float64(count - 1 ) * 20
-	log.Println("frequency", riskScore)
-	return math.Min(100, riskScore), nil
+	riskScore := float64(count-1) * 20
+
+	if riskScore > 100 {
+		riskScore = 100
+	}
+	return riskScore, nil
 }
 
-func (s *service) UpdateUserBehaviorAfterTransaction(
-	ctx context.Context,
-	behavior *UserBehavior,
-	amount float64,
-	txID uuid.UUID,
-	txTime time.Time,
-) error {
+func (s *service) UpdateUserBehaviorAfterTransaction(ctx context.Context, behavior *UserBehavior, amount float64, txID uuid.UUID, txTime time.Time) error {
 
 	// ---------- Capture OLD values for audit ----------
 	oldValues := map[string]interface{}{
-		"total_transactions":       behavior.TotalTransactions,
-		"avg_transaction_amount":   behavior.AvgTransactionAmount,
-		"amount_variance":          behavior.AmountVariance,
-		"amount_std_dev":           behavior.AmountStdDev,
-		"recent_avg_amount":        behavior.RecentAvgAmount,
-		"high_value_threshold":     behavior.HighValueThreshold,
-		"last_transaction_amount":  behavior.LastTransactionAmount,
-		"last_transaction_time":    behavior.LastTransactionTime,
+		"total_transactions":      behavior.TotalTransactions,
+		"avg_transaction_amount":  behavior.AvgTransactionAmount,
+		"amount_variance":         behavior.AmountVariance,
+		"amount_std_dev":          behavior.AmountStdDev,
+		"recent_avg_amount":       behavior.RecentAvgAmount,
+		"high_value_threshold":    behavior.HighValueThreshold,
+		"last_transaction_amount": behavior.LastTransactionAmount,
+		"last_transaction_time":   behavior.LastTransactionTime,
 	}
 
 	// ---------- 1. Increment transaction count ----------
@@ -492,14 +506,14 @@ func (s *service) UpdateUserBehaviorAfterTransaction(
 
 	// ---------- Capture NEW values for audit ----------
 	newValues := map[string]interface{}{
-		"total_transactions":       behavior.TotalTransactions,
-		"avg_transaction_amount":   behavior.AvgTransactionAmount,
-		"amount_variance":          behavior.AmountVariance,
-		"amount_std_dev":           behavior.AmountStdDev,
-		"recent_avg_amount":        behavior.RecentAvgAmount,
-		"high_value_threshold":     behavior.HighValueThreshold,
-		"last_transaction_amount":  behavior.LastTransactionAmount,
-		"last_transaction_time":    behavior.LastTransactionTime,
+		"total_transactions":      behavior.TotalTransactions,
+		"avg_transaction_amount":  behavior.AvgTransactionAmount,
+		"amount_variance":         behavior.AmountVariance,
+		"amount_std_dev":          behavior.AmountStdDev,
+		"recent_avg_amount":       behavior.RecentAvgAmount,
+		"high_value_threshold":    behavior.HighValueThreshold,
+		"last_transaction_amount": behavior.LastTransactionAmount,
+		"last_transaction_time":   behavior.LastTransactionTime,
 	}
 
 	// ---------- Audit log ----------
@@ -517,7 +531,6 @@ func (s *service) UpdateUserBehaviorAfterTransaction(
 
 	return nil
 }
-
 
 func (s *service) CreateUserBehavior(ctx context.Context, userID uuid.UUID) error {
 	behavior := &UserBehavior{
@@ -547,7 +560,7 @@ func (s *service) CreateUserBehavior(ctx context.Context, userID uuid.UUID) erro
 		EntityID:   userID.String(),
 		ActorType:  "SYSTEM",
 		NewValues: map[string]interface{}{
-			"total_transactions": 1,
+			"total_transactions":   1,
 			"ema_smoothing_factor": 0.1,
 		},
 	})
