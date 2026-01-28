@@ -78,9 +78,9 @@ func (s *service) Signup(req SignupRequest, ipAddress string) (SignupResponse, e
 		EventType:  audit.EventSecurityUpdated,
 		Action:     "CREATE",
 		EntityType: "user_security",
-		EntityID:   existingUser.ID.String(),
 		ActorType:  "SYSTEM",
 		NewValues: map[string]interface{}{
+			"email": req.Email,
 			"device_id": req.DeviceID,
 		},
 	})

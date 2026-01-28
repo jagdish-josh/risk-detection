@@ -198,10 +198,8 @@ func applyRule(rawScore int, rule RiskRule) int {
 	if !rule.Enabled {
 		return 0
 	}
-	if rawScore < rule.Threshold {
-		return 0
-	}
-	return rule.Weight
+	
+	return (rule.Weight * rawScore)/100
 }
 func (s *service) getRule(name string) (RiskRule, bool) {
 	s.mu.RLock()
@@ -369,6 +367,7 @@ func (s *service) transactionAmountRisk(
 	if riskScore > 100 {
 		riskScore = 100
 	}
+	log.Println("amoutrisk", riskScore)
 
 	return riskScore, nil
 }
@@ -397,6 +396,7 @@ func (s *service) transactionDeviceRisk(ctx context.Context, userID uuid.UUID, t
 	if deviceID == txDeviceID {
 		return 0, nil
 	}
+	log.Println("devicerisk", 100)
 	return 100, nil
 }
 
@@ -416,7 +416,8 @@ func (s *service) transactionFrequencyRisk(ctx context.Context, userID uuid.UUID
 	}
 
 	// Convert int64 to float64 and apply risk calculation
-	riskScore := float64(count) * 10
+	riskScore := float64(count - 1 ) * 20
+	log.Println("frequency", riskScore)
 	return math.Min(100, riskScore), nil
 }
 

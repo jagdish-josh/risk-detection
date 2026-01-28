@@ -19,8 +19,8 @@ func StartBehaviorCron(
 
 	c := cron.New(cron.WithLocation(time.UTC))
 
-	// Runs every day at 01:00 UTC
-	_, err := c.AddFunc("0 1 * * *", func() {
+	_, err := c.AddFunc("@every 5s", func() {   //for dev perpose
+	// _, err := c.AddFunc("0 1 * * *", func() {   // Runs every day at 01:00 UTC
 		day := time.Now().UTC().AddDate(0, 0, -1)
 
 		if err := updater.UpdateDailyBehavior(ctx, day); err != nil {
